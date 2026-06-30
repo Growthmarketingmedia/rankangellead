@@ -526,14 +526,14 @@ select.ms-input { appearance: auto; cursor: pointer; }
   vertical-align: middle;
   margin-left: 16px;
   border-radius: 50%;
-  background: #2ECC40;
-  box-shadow: 0 0 8px 1px rgba(46,204,64,0.9);
+  background: #FF3B30;
+  box-shadow: 0 0 8px 1px rgba(255,59,48,0.9);
   animation: territory-pulse 1.3s ease-out infinite;
 }
 @keyframes territory-pulse {
-  0%   { box-shadow: 0 0 8px 1px rgba(46,204,64,0.9), 0 0 0 0 rgba(46,204,64,0.7); opacity: 1; }
-  70%  { box-shadow: 0 0 8px 1px rgba(46,204,64,0.9), 0 0 0 14px rgba(46,204,64,0); opacity: 0.65; }
-  100% { box-shadow: 0 0 8px 1px rgba(46,204,64,0.9), 0 0 0 0 rgba(46,204,64,0); opacity: 1; }
+  0%   { box-shadow: 0 0 8px 1px rgba(255,59,48,0.9), 0 0 0 0 rgba(255,59,48,0.7); opacity: 1; }
+  70%  { box-shadow: 0 0 8px 1px rgba(255,59,48,0.9), 0 0 0 14px rgba(255,59,48,0); opacity: 0.65; }
+  100% { box-shadow: 0 0 8px 1px rgba(255,59,48,0.9), 0 0 0 0 rgba(255,59,48,0); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .blink-dot { animation: none; } }
 .page-subhead {
