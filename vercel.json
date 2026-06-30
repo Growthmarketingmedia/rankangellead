@@ -1,0 +1,21 @@
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/optin", "destination": "/" },
+    { "source": "/opt-in", "destination": "/" }
+  ],
+  "redirects": [
+    { "source": "/", "destination": "/optin", "permanent": false },
+    { "source": "/calendar", "destination": "/book-now", "permanent": false },
+    { "source": "/confirmation", "destination": "/thankyou", "permanent": false }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    }
+  ]
+}

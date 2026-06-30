@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <title>Book Your Free Strategy Call | Rank Angel</title>
+  <meta name="robots" content="noindex" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Open+Sans:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- ============ Google Tag Manager (placeholder — replace GTM-XXXXXXX) ============ -->
+  <script>
+    // (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-XXXXXXX');
+  </script>
+  <!-- ============ End Google Tag Manager ============ -->
+
+  <!-- Meta Pixel Code -->
+  <script>
+  !function(f,b,e,v,n,t,s)
+  {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+  if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+  n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];
+  s.parentNode.insertBefore(t,s)}(window, document,'script',
+  'https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '284895002928666');
+  fbq('init', '1673592186892757');
+  fbq('track', 'PageView');
+  fbq('track', 'SubmitApplication');
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+  src="https://www.facebook.com/tr?id=284895002928666&ev=PageView&noscript=1"/></noscript>
+  <noscript><img height="1" width="1" style="display:none"
+  src="https://www.facebook.com/tr?id=1673592186892757&ev=PageView&noscript=1"/></noscript>
+  <!-- End Meta Pixel Code -->
+</head>
+<body class="section-dark" style="background:var(--bg-dark)">
+
+  <header class="site-header">
+    <img src="rank-angel-logo.png" alt="Rank Angel" />
+  </header>
+
+  <section class="page-intro">
+    <div class="container">
+      <h1 class="territory-headline"><span id="zip-note">Your Territory Is Available &mdash; Claim It Before It&rsquo;s Gone!</span><span class="blink-dot" aria-hidden="true"></span></h1>
+      <h2 class="page-subhead">Choose a Time for Your Free Strategy Call</h2>
+      <p>15 minutes. We&rsquo;ll show you exactly how this works for your market.</p>
+    </div>
+  </section>
+
+  <div class="calendar-wrap">
+    <!-- GHL booking embed -->
+    <iframe style="width:100%;border:none;overflow:hidden;"
+            scrolling="no"
+            id="9WIdxZKft7481V1mX5uz_1782743879826"></iframe>
+    <script>
+      // Build the booking URL WITH the lead's details BEFORE the GHL widget loads,
+      // so name / company / phone / email / zip prefill on first render (no reload).
+      (function () {
+        var base = 'https://api.leadconnectorhq.com/widget/booking/9WIdxZKft7481V1mX5uz';
+        var lead = {};
+        try { lead = JSON.parse(sessionStorage.getItem('lead_data') || '{}') || {}; } catch (e) {}
+        var p = new URLSearchParams(location.search);
+        var zip = p.get('zip') || lead.zip || '';
+        var qs = new URLSearchParams();
+        var name = (lead.name || '').trim();
+        if (name) {
+          var n = name.split(/\s+/);
+          qs.set('first_name', n.shift());
+          if (n.length) qs.set('last_name', n.join(' '));
+          qs.set('name', name);
+          qs.set('full_name', name);
+        }
+        if (lead.email)   qs.set('email', lead.email);
+        if (lead.phone)   qs.set('phone', lead.phone);
+        if (lead.company) qs.set('organization', lead.company); // booking form field name="organization"
+        if (zip)          qs.set('zip', zip);
+        document.getElementById('9WIdxZKft7481V1mX5uz_1782743879826').src =
+          base + (qs.toString() ? ('?' + qs.toString()) : '');
+      })();
+    </script>
+    <script src="https://link.msgsndr.com/js/form_embed.js" type="text/javascript"></script>
+  </div>
+
+  <footer class="site-footer">
+    &copy; Rank Angel. All rights reserved.
+    <div class="footer-links">
+      <a href="https://growthmarketingco.com/privacy-policy-gmm" target="_blank" rel="noopener">Privacy Policy</a>
+      <span class="sep" aria-hidden="true">&middot;</span>
+      <a href="https://growthmarketingco.com/terms-and-conditions" target="_blank" rel="noopener">Terms &amp; Conditions</a>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+    // Redirect to the thank-you page when GHL signals a completed booking.
+    window.addEventListener('message', function (e) {
+      var d = e.data;
+      var isBooked =
+        (typeof d === 'string' && /appointment|booked|booking_confirm/i.test(d)) ||
+        (d && (d.type === 'appointmentBooked' || d.event === 'appointmentBooked' || d.page === 'thankyou'));
+      if (isBooked) {
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ event: 'calendar_booked' });
+        window.location.href = 'thankyou.html';
+      }
+    });
+  </script>
+</body>
+</html>
