@@ -10,6 +10,8 @@
 var CONFIG = {
   // Webhook that receives the whole lead (GHL pipeline, or a Supabase endpoint later).
   LEAD_WEBHOOK_URL: null,        // e.g. "https://services.leadconnectorhq.com/hooks/.../webhook-trigger/..."
+  // LeadFi pre-qualification proxy (api/lead.js). Set to null to disable.
+  PREQUALIFY_URL:  "/api/lead",
   CALENDAR_PAGE:   "book-now.html",
   CONFIRM_PAGE:    "thankyou.html",
   // Submissions dashboard endpoint (receives every lead).
@@ -104,6 +106,12 @@ function initMultiStep() {
       if (!v) return 'Please complete this field to continue.';
       if (f.name === 'zip' && !/^\d{5}$/.test(v)) return 'Please enter a valid 5-digit zip code.';
       if (f.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return 'Please enter a valid email address.';
+      // US numbers only — pre-qualification rejects anything else.
+      if (f.type === 'tel') {
+        var d = v.replace(/\D/g, '');
+        if (d.length === 11 && d.charAt(0) === '1') d = d.slice(1);
+        if (d.length !== 10) return 'Please enter a valid 10-digit US phone number.';
+      }
     }
     return '';
   }
@@ -186,6 +194,36 @@ function initDropdowns(form) {
   });
 }
 
+/* ---------- LeadFi pre-qualification ----------
+   Runs server-side via /api/lead so the visitor's real IP can be read and the
+   API key stays off the client. Always resolves — a lead is never lost because
+   pre-qualification was slow or unavailable. */
+function prequalify(data) {
+  return new Promise(function (resolve) {
+    if (!CONFIG.PREQUALIFY_URL || data.terms !== true) { resolve(null); return; }
+
+    var settled = false;
+    function done(result) { if (!settled) { settled = true; resolve(result); } }
+
+    // Client-side backstop, shorter than the function's own 8s timeout.
+    setTimeout(function () { done({ ok: false, reason: 'client_timeout' }); }, 6000);
+
+    try {
+      fetch(CONFIG.PREQUALIFY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: data.name, email: data.email, phone: data.phone,
+          zip: data.zip, terms: data.terms
+        })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { done(j); })
+        .catch(function () { done({ ok: false, reason: 'network' }); });
+    } catch (err) { done({ ok: false, reason: 'threw' }); }
+  });
+}
+
 /* ---------- Submit the full lead -> webhook -> calendar ---------- */
 function submitLead(form) {
   var data = {};
@@ -199,6 +237,23 @@ function submitLead(form) {
   window.dataLayer = window.dataLayer || [];
   window.dataLayer.push({ event: 'lead_submit', variant: data.variant, zip: data.zip });
 
+  var submitBtn = form.querySelector('.ms-submit');
+  var btnLabel = submitBtn ? submitBtn.textContent : '';
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Checking availability…'; }
+
+  prequalify(data).then(function (pq) {
+    if (pq) {
+      data.leadfi_status = pq.ok ? 'success' : (pq.reason || 'unknown');
+      data.leadfi_qualification = pq.qualification || '';
+      data.leadfi_tier = pq.tier || '';
+    }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = btnLabel; }
+    dispatchLead(data);
+  });
+}
+
+/* ---------- Fan the completed lead out to every destination ---------- */
+function dispatchLead(data) {
   try {
     sessionStorage.setItem('lead_data', JSON.stringify(data));
     sessionStorage.setItem('lead_zip', data.zip || '');
