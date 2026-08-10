@@ -136,6 +136,20 @@ module.exports = async function handler(req, res) {
         prequalifyBlockedBy: problems.join(","),
     };
 
+    // Dry run: echo the payload instead of forwarding it. Nothing reaches the
+    // CRM, no workflow runs, no LeadFi request is made and nothing is charged.
+    // Only ever returns the caller's own submission, so it exposes nothing.
+    // Opt in explicitly with ?dryRun=1 — never triggered by a normal submit.
+    const url = new URL(req.url, "http://localhost");
+    if (url.searchParams.get("dryRun") === "1") {
+        return res.status(200).json({
+            ok: true,
+            dryRun: true,
+            wouldSendTo: webhook.replace(/\/[^/]{8,}$/, "/…"),
+            payload,
+        });
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
 
