@@ -9,9 +9,12 @@
 // ----- CONFIG: fill these in once provided -----
 var CONFIG = {
   // Webhook that receives the whole lead (GHL pipeline, or a Supabase endpoint later).
-  LEAD_WEBHOOK_URL: null,        // e.g. "https://services.leadconnectorhq.com/hooks/.../webhook-trigger/..."
-  // LeadFi pre-qualification proxy (api/lead.js). Set to null to disable.
-  PREQUALIFY_URL:  "/api/lead",
+  // Superseded by LEAD_INTAKE_URL below: the browser no longer posts to GHL
+  // directly, because it cannot see its own IP and LeadFi requires one.
+  LEAD_WEBHOOK_URL: null,
+  // Server-side intake (api/lead.js): captures the real IP, normalises the
+  // name and phone, forwards to the GHL inbound webhook. Null to disable.
+  LEAD_INTAKE_URL: "/api/lead",
   CALENDAR_PAGE:   "book-now.html",
   CONFIRM_PAGE:    "thankyou.html",
   // Submissions dashboard endpoint (receives every lead).
@@ -194,13 +197,14 @@ function initDropdowns(form) {
   });
 }
 
-/* ---------- LeadFi pre-qualification ----------
-   Runs server-side via /api/lead so the visitor's real IP can be read and the
-   API key stays off the client. Always resolves — a lead is never lost because
-   pre-qualification was slow or unavailable. */
-function prequalify(data) {
+/* ---------- Send the lead to the CRM ----------
+   Runs server-side via /api/lead so the visitor's real IP can be captured for
+   LeadFi's ConsentIP. That function forwards to the GHL inbound webhook, which
+   creates the contact and applies the `lead-fi` tag. Always resolves — a lead
+   is never lost because the CRM hop was slow or unavailable. */
+function sendToIntake(data) {
   return new Promise(function (resolve) {
-    if (!CONFIG.PREQUALIFY_URL || data.terms !== true) { resolve(null); return; }
+    if (!CONFIG.LEAD_INTAKE_URL || data.terms !== true) { resolve(null); return; }
 
     var settled = false;
     function done(result) { if (!settled) { settled = true; resolve(result); } }
@@ -209,12 +213,14 @@ function prequalify(data) {
     setTimeout(function () { done({ ok: false, reason: 'client_timeout' }); }, 6000);
 
     try {
-      fetch(CONFIG.PREQUALIFY_URL, {
+      fetch(CONFIG.LEAD_INTAKE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: data.name, email: data.email, phone: data.phone,
-          zip: data.zip, terms: data.terms
+          zip: data.zip, company: data.company, service: data.service,
+          jobs_per_month: data.jobs_per_month, variant: data.variant,
+          terms: data.terms
         })
       })
         .then(function (r) { return r.json(); })
@@ -239,13 +245,16 @@ function submitLead(form) {
 
   var submitBtn = form.querySelector('.ms-submit');
   var btnLabel = submitBtn ? submitBtn.textContent : '';
-  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Checking availability…'; }
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Submitting…'; }
 
-  prequalify(data).then(function (pq) {
-    if (pq) {
-      data.leadfi_status = pq.ok ? 'success' : (pq.reason || 'unknown');
-      data.leadfi_qualification = pq.qualification || '';
-      data.leadfi_tier = pq.tier || '';
+  sendToIntake(data).then(function (r) {
+    if (r) {
+      data.crm_status = r.ok ? 'sent' : (r.reason || 'unknown');
+      // "queued" means the GHL workflow will tag the contact and LeadFi will
+      // answer within about a minute. "skipped" means the lead reached the CRM
+      // but failed LeadFi's input rules — blockedBy says which.
+      data.prequalify = r.prequalify || '';
+      data.prequalify_blocked_by = r.blockedBy || '';
     }
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = btnLabel; }
     dispatchLead(data);

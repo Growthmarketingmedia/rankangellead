@@ -1,34 +1,31 @@
 /**
- * LeadFi pre-qualification proxy.
+ * Lead intake proxy: funnel -> GHL -> LeadFi.
  *
- * The funnel is a static page, so it cannot see the visitor's IP address.
- * LeadFi requires ConsentIP and ConsentDate on every request — two of its six
- * mandatory fields exist purely to record that the person consented, and when.
- * This function is where those are captured truthfully.
+ * The page POSTs here; this forwards an enriched payload to a GHL inbound
+ * webhook. The GHL workflow creates the contact and applies the `lead-fi`
+ * tag, which triggers the LeadFi workflow LeadFi already built. No LeadFi
+ * credentials live here — that workflow holds them.
  *
- * It also normalises the two things LeadFi rejects most often: a single
- * "Full Name" field, and phone numbers that are not US-formatted.
+ * This function exists because three things cannot be done on a static page:
  *
- * The LeadFi response is deliberately NOT returned to the browser in full.
- * Only the routing decision (qualification + tier) goes back; the credit
- * score, limits and DTI stay server-side.
+ *  1. ConsentIP. LeadFi requires it and rejects a blank one. A static page
+ *     cannot see its own visitor's IP, and neither can Zapier or Make — they
+ *     only see what the page sends them. The SOP suggests falling back to an
+ *     office IP; that would record a Denver office as the place the consumer
+ *     consented, so we fail soft instead.
+ *  2. Name splitting. The funnel has one "Full Name" field; LeadFi needs
+ *     First and Last separately, letters/spaces/apostrophes/hyphens only.
+ *  3. US phone normalisation. LeadFi rejects anything else.
  *
  * Env vars (set in Vercel, never committed):
- *   LEADFI_API_KEY    — Dashboard > API & MCP
- *   LEADFI_TRACK_ID   — Dashboard > Packages
- *   LEADFI_MODE       — "test" (default, sandbox/mock) or "live" (real pull)
+ *   GHL_WEBHOOK_URL — Inbound Webhook trigger URL from the GHL workflow
  */
-
-const ENDPOINTS = {
-    test: "https://api.leadfi.ai/api/v2/pre-qualify-test/",
-    live: "https://api.leadfi.ai/api/v2/pre-qualify/",
-};
 
 // LeadFi requires: letters, spaces, apostrophes, hyphens. Nothing else.
 function sanitiseName(value) {
     return String(value || "")
         .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "") // strip accents rather than reject them
+        .replace(/[̀-ͯ]/g, "") // fold accents rather than reject them
         .replace(/[^A-Za-z '-]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
@@ -37,8 +34,8 @@ function sanitiseName(value) {
 /** "Steve O'Brien-Smith Jr" -> { first: "Steve", last: "O'Brien-Smith Jr" } */
 function splitName(fullName) {
     const raw = String(fullName || "");
-    // Digits in a name mean junk input. Sanitising would turn "J0hn Sm1th"
-    // into "J / hn Sm th" and burn a paid request that could never match.
+    // Digits mean junk input. Sanitising would turn "J0hn Sm1th" into
+    // "J / hn Sm th" and burn a paid LeadFi request that could never match.
     if (/\d/.test(raw)) return { first: "", last: "" };
 
     const clean = sanitiseName(raw);
@@ -48,18 +45,14 @@ function splitName(fullName) {
     return { first: parts[0], last: parts.slice(1).join(" ") };
 }
 
-/** LeadFi accepts US numbers, 10-15 digits. Drop a leading US country code. */
+/** LeadFi accepts US numbers. Drop a leading country code, require 10 digits. */
 function normalisePhone(value) {
     let digits = String(value || "").replace(/\D/g, "");
     if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
     return digits.length === 10 ? digits : null;
 }
 
-/**
- * The visitor's real IP. Vercel puts the client first in x-forwarded-for.
- * We never substitute an office IP: this field records where the consumer
- * consented, and a stand-in would make that record false.
- */
+/** The visitor's real IP. Vercel puts the client first in x-forwarded-for. */
 function clientIp(req) {
     const fwd = req.headers["x-forwarded-for"];
     if (typeof fwd === "string" && fwd.trim()) return fwd.split(",")[0].trim();
@@ -69,6 +62,14 @@ function clientIp(req) {
 /** ISO-8601 with timezone offset, e.g. 2026-07-29T14:03:11+00:00 */
 function isoWithOffset(date) {
     return date.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+}
+
+function safeParse(s) {
+    try {
+        return JSON.parse(s);
+    } catch {
+        return {};
+    }
 }
 
 module.exports = async function handler(req, res) {
@@ -84,10 +85,9 @@ module.exports = async function handler(req, res) {
         return res.status(200).json({ ok: false, reason: "no_consent" });
     }
 
-    const apiKey = process.env.LEADFI_API_KEY;
-    const trackId = process.env.LEADFI_TRACK_ID;
-    if (!apiKey || !trackId) {
-        console.error("LeadFi credentials missing — skipping pre-qualification");
+    const webhook = process.env.GHL_WEBHOOK_URL;
+    if (!webhook) {
+        console.error("GHL_WEBHOOK_URL not set — lead not forwarded to CRM");
         return res.status(200).json({ ok: false, reason: "not_configured" });
     }
 
@@ -97,80 +97,74 @@ module.exports = async function handler(req, res) {
 
     // Fail soft on every validation problem. A lead we cannot pre-qualify is
     // still a lead — it must never be lost because LeadFi would reject it.
-    if (!first || !last) return res.status(200).json({ ok: false, reason: "name_unusable" });
-    if (!phone) return res.status(200).json({ ok: false, reason: "phone_not_us" });
-    if (!body.email) return res.status(200).json({ ok: false, reason: "email_missing" });
-    if (!ip) return res.status(200).json({ ok: false, reason: "ip_unavailable" });
+    // These are reported so a bad match rate is visible rather than silent.
+    const problems = [];
+    if (!first || !last) problems.push("name_unusable");
+    if (!phone) problems.push("phone_not_us");
+    if (!body.email) problems.push("email_missing");
+    if (!ip) problems.push("ip_unavailable");
 
+    // A name LeadFi cannot use is still a name the CRM needs. Fall back to
+    // whatever the visitor typed so the contact is never created nameless —
+    // it just does not get sent for pre-qualification.
+    const rawName = String(body.name || "").trim();
+
+    // Field names match what the "Lead Fi" workflow's inbound webhook already
+    // receives from "Send To Lead Fi" — snake_case, E.164 phone, and the
+    // consent IP in a custom field named exactly "IP".
     const payload = {
-        FirstName: first,
-        LastName: last,
-        Email: String(body.email).trim(),
-        Phone: phone,
-        ConsentDate: isoWithOffset(new Date()),
-        ConsentIP: ip,
+        first_name: first || rawName,
+        last_name: last,
+        full_name: rawName,
+        email: String(body.email || "").trim(),
+        phone: phone ? "+1" + phone : String(body.phone || "").trim(),
+        IP: ip || "",
+        country: "US",
+        company_name: String(body.company || "").trim(),
+        // Context for the CRM record. Not used by LeadFi.
+        consent_date: isoWithOffset(new Date()),
+        zip: String(body.zip || "").trim(),
+        service: String(body.service || "").trim(),
+        jobs_per_month: String(body.jobs_per_month || "").trim(),
+        variant: String(body.variant || "").trim(),
+        contact_source: "RankAngel Opt-in Funnel",
+        source: "lead-funnel",
+        // Tells the GHL workflow whether this lead is safe to send to LeadFi.
+        // Leads that would fail validation still reach the CRM — they just
+        // should not have the `lead-fi` tag applied.
+        prequalifyEligible: problems.length === 0,
+        prequalifyBlockedBy: problems.join(","),
     };
-    if (/^\d{5}$/.test(String(body.zip || "").trim())) payload.Zip = String(body.zip).trim();
 
-    const mode = process.env.LEADFI_MODE === "live" ? "live" : "test";
-
-    // Never let a slow or failing LeadFi hold up the funnel.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
 
     try {
-        const upstream = await fetch(ENDPOINTS[mode], {
+        const upstream = await fetch(webhook, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "track-id": trackId,
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
             signal: controller.signal,
         });
 
-        const data = await upstream.json().catch(() => ({}));
-
-        // LeadFi returns HTTP 200/201 for both success and failure; Status is
-        // the field that actually tells you which.
-        const failed =
-            String(data.Status || "").toLowerCase() !== "success" ||
-            (Array.isArray(data.Errors) && data.Errors.length > 0);
-
-        if (failed) {
-            console.warn("LeadFi returned a failure", {
-                mode,
-                code: data.Code,
-                errors: data.Errors,
-            });
-            return res.status(200).json({
-                ok: false,
-                reason: "leadfi_failed",
-                code: data.Code || null,
-            });
+        if (!upstream.ok) {
+            console.warn("GHL webhook rejected the lead", upstream.status);
+            return res.status(200).json({ ok: false, reason: "ghl_" + upstream.status });
         }
 
-        // Routing data only. Credit score, limits and DTI stay on the server.
         return res.status(200).json({
             ok: true,
-            mode,
-            qualification: data["Pre Qualification"] || null,
-            tier: data.Tier || null,
+            // Pre-qualification is asynchronous: the GHL workflow tags the
+            // contact and LeadFi answers within about a minute, long after
+            // the visitor has left. Nothing to route on here.
+            prequalify: problems.length === 0 ? "queued" : "skipped",
+            blockedBy: problems.join(",") || null,
         });
     } catch (err) {
         const aborted = err.name === "AbortError";
-        console.error(aborted ? "LeadFi timed out" : "LeadFi request threw", err.message);
+        console.error(aborted ? "GHL webhook timed out" : "GHL webhook threw", err.message);
         return res.status(200).json({ ok: false, reason: aborted ? "timeout" : "request_failed" });
     } finally {
         clearTimeout(timer);
     }
 };
-
-function safeParse(s) {
-    try {
-        return JSON.parse(s);
-    } catch {
-        return {};
-    }
-}
